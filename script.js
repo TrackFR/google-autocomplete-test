@@ -39,12 +39,3 @@
           }
         }
       }
-      private autocomplete_init: boolean: false;
-
-      autocompleteFocus() {
-       this.autocomplete_init = true;
-       if (!this.autocomplete_init) {
-        this._autocomplete = new google.maps.places.Autocomplete(document.getElementById("autocomplete"), {
-        componentRestrictions: {'country': 'fr'}
-        }
-      }
