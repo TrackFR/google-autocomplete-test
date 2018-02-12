@@ -1,41 +1,172 @@
-      var placeSearch, autocomplete;
-      var componentForm = {
-        street_number: 'short_name',
-        route: 'long_name',
-        locality: 'long_name',
-        administrative_area_level_1: 'short_name',
-        country: 'long_name',
-        postal_code: 'short_name'
-      };
+var GoogleMapsDemo = GoogleMapsDemo || {};
 
-      function initAutocomplete() {
-        // Create the autocomplete object, restricting the search to geographical
-        // location types.
-        autocomplete = new google.maps.places.Autocomplete(
-            /** @type {!HTMLInputElement} */(document.getElementById('autocomplete')),
-            {types: ['geocode']});
+GoogleMapsDemo.Utilities = (function () {
+    var _getUserLocation = function (successCallback, failureCallback) {
+        if (navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition(function (position) {
+                successCallback(position);
+            }, function () {
+                failureCallback(true);
+            });
+         } else {
+             failureCallback(false);
+         }
+    };
 
-        // When the user selects an address from the dropdown, populate the address
-        // fields in the form.
-        autocomplete.addListener('place_changed', fillInAddress);
-      }
+    return {
+        GetUserLocation: _getUserLocation
+    }
+})();
 
-      function fillInAddress() {
-        // Get the place details from the autocomplete object.
+GoogleMapsDemo.Application = (function () {
+    var _geocoder;
+
+    var _init = function () {
+        _geocoder = new google.maps.Geocoder;
+
+        GoogleMapsDemo.Utilities.GetUserLocation(function (position) {
+            var latLng = {
+                lat: position.coords.latitude,
+                lng: position.coords.longitude
+            };
+            _autofillFromUserLocation(latLng);
+            _initAutocompletes(latLng);
+        }, function (browserHasGeolocation) {
+            _initAutocompletes();
+        });
+    };
+
+    var _initAutocompletes = function (latLng) {
+        $('.places-autocomplete').each(function () {
+            var input = this;
+            var isPostalCode = $(input).is('[id$=PostalCode]');
+            var autocomplete = new google.maps.places.Autocomplete(input, {
+                types: [isPostalCode ? '(regions)' : 'address']
+            });
+            if (latLng) {
+                _setBoundsFromLatLng(autocomplete, latLng);
+            }
+
+            autocomplete.addListener('place_changed', function () {
+                _placeChanged(autocomplete, input);
+            });
+
+            $(input).on('keydown', function (e) {
+                // Prevent form submit when selecting from autocomplete dropdown with enter key
+                if (e.keyCode === 13 && $('.pac-container:visible').length > 0) {
+                    e.preventDefault();
+                }
+            });
+        });
+    }
+
+    var _autofillFromUserLocation = function (latLng) {
+        _reverseGeocode(latLng, function (result) {
+            $('.address').each(function (i, fieldset) {
+                _updateAddress({
+                    fieldset: fieldset,
+                    address_components: result.address_components
+                });
+            });
+        });
+    };
+
+    var _reverseGeocode = function (latLng, successCallback, failureCallback) {
+        _geocoder.geocode({ 'location': latLng }, function(results, status) {
+            if (status === 'OK') {
+                if (results[1]) {
+                    successCallback(results[1]);
+                } else {
+                    if (failureCallback)
+                        failureCallback(status);
+                }
+            } else {
+                if (failureCallback)
+                    failureCallback(status);
+            }
+        });
+    }
+
+    var _setBoundsFromLatLng = function (autocomplete, latLng) {
+        var circle = new google.maps.Circle({
+            radius: 40233.6, // 25 mi radius
+            center: latLng
+        });
+        autocomplete.setBounds(circle.getBounds());
+    }
+
+    var _placeChanged = function (autocomplete, input) {
         var place = autocomplete.getPlace();
+        _updateAddress({
+            input: input,
+            address_components: place.address_components
+        });
+    }
 
-        for (var component in componentForm) {
-          document.getElementById(component).value = '';
-          document.getElementById(component).disabled = false;
+    var _updateAddress = function (args) {
+        var $fieldset;
+        var isPostalCode = false;
+        if (args.input) {
+            $fieldset = $(args.input).closest('fieldset');
+            isPostalCode = $(args.input).is('[id$=PostalCode]');
+            console.log(isPostalCode);
+        } else {
+            $fieldset = $(args.fieldset);
         }
 
-        // Get each component of the address from the place details
-        // and fill the corresponding field on the form.
-        for (var i = 0; i < place.address_components.length; i++) {
-          var addressType = place.address_components[i].types[0];
-          if (componentForm[addressType]) {
-            var val = place.address_components[i][componentForm[addressType]];
-            document.getElementById(addressType).value = val;
-          }
+        var $street = $fieldset.find('[id$=Street]');
+        var $street2 = $fieldset.find('[id$=Street2]');
+        var $postalCode = $fieldset.find('[id$=PostalCode]');
+        var $city = $fieldset.find('[id$=City]');
+        var $country = $fieldset.find('[id$=Country]');
+        var $state = $fieldset.find('[id$=State]');
+
+        if (!isPostalCode) {
+            $street.val('');
+            $street2.val('');
         }
-      }
+        $postalCode.val('');
+        $city.val('');
+        $country.val('');
+        $state.val('');
+
+        var streetNumber = '';
+        var route = '';
+
+        for (var i = 0; i < args.address_components.length; i++) {
+            var component = args.address_components[i];
+            var addressType = component.types[0];
+
+            switch (addressType) {
+                case 'street_number':
+                    streetNumber = component.long_name;
+                    break;
+                case 'route':
+                    route = component.short_name;
+                    break;
+                case 'locality':
+                    $city.val(component.long_name);
+                    break;
+                case 'administrative_area_level_1':
+                    $state.val(component.long_name);
+                    break;
+                case 'postal_code':
+                    $postalCode.val(component.long_name);
+                    break;
+                case 'country':
+                    $country.val(component.long_name);
+                    break;
+            }
+        }
+
+        if (route) {
+            $street.val(streetNumber && route
+                        ? streetNumber + ' ' + route
+                        : route);
+        }
+    }
+
+    return {
+        Init: _init
+    }
+})();
